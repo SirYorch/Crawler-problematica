@@ -122,12 +122,15 @@ async def tarea_scraping(page, tema, tiempo_limite_segundos, cantidad_comentario
     print(f"[LinkedIn] BUSCANDO EN LINKEDIN: '{tema}'")
     comentarios_totales = []
     try:
-        # 1. Búsqueda
-        url_busqueda = f"https://www.linkedin.com/search/results/content/?keywords={tema}&origin=GLOBAL_SEARCH_HEADER"
+        # 1. Búsqueda (codificamos el hashtag correctamente como %23 para evitar redirección vacía)
+        url_busqueda = f"https://www.linkedin.com/search/results/content/?keywords=%23{tema}&origin=GLOBAL_SEARCH_HEADER&sortBy=[%22relevance%22]&datePosted=[%22past-month%22]"
         await page.goto(url_busqueda, wait_until='domcontentloaded')
 
         # Esperamos al contenedor de resultados
-        await page.wait_for_selector('div.search-results-container', timeout=20000)
+        try:
+            await page.wait_for_selector('div.search-results-container, button[aria-label*="control" i], div[role="listitem"]', timeout=20000)
+        except Exception:
+            print("[LinkedIn] Advertencia: Selector principal no encontrado, intentando continuar...")
 
         urls_recolectadas = set()
 
@@ -139,9 +142,8 @@ async def tarea_scraping(page, tema, tiempo_limite_segundos, cantidad_comentario
             await asyncio.sleep(2)
 
         # 2. Recolección de Links vía Menú
-        # Buscamos los botones de 'tres puntos'
-        botones = page.locator(
-            "div.search-results-container button.feed-shared-control-menu__trigger")
+        # Buscamos los botones de 'tres puntos' (independiente de clases ofuscadas)
+        botones = page.locator('button[aria-label*="control menu" i], button[aria-label*="menú de controles" i], button[aria-label*="controles" i]')
         count = await botones.count()
         print(f"[LinkedIn] Analizando {count} publicaciones...")
 
@@ -163,21 +165,10 @@ async def tarea_scraping(page, tema, tiempo_limite_segundos, cantidad_comentario
 
                 if await btn.is_visible():
                     await btn.click()  # 1. Clic en los 3 puntos
+                    await asyncio.sleep(2)
 
-                    # --- CORRECCIÓN DEL ERROR DE STRICT MODE ---
-                    # El error ocurría porque hay 18 menús ocultos.
-                    # 1. Usamos la clase específica del menú de posts (feed-shared-control...) para ignorar la navbar.
-                    # 2. Usamos :visible para que solo seleccione el que acabamos de abrir.
-                    dropdown_selector = "div.feed-shared-control-menu__content.artdeco-dropdown__content:visible"
-
-                    dropdown = page.locator(dropdown_selector)
-
-                    # Esperamos a que ese único menú sea estable
-                    await dropdown.wait_for(timeout=3000)
-
-                    # 2. Buscar opción "Copiar enlace" DENTRO de ese menú visible
-                    # Buscamos el 'li' que contiene el texto, luego el click lo hacemos en el centro
-                    opcion_copiar = dropdown.locator("li").filter(
+                    # 2. Buscar opción "Copiar enlace" (soportando divs de menú modernos y li)
+                    opcion_copiar = page.locator('div[role="menuitem"], li, button').filter(
                         has_text=re.compile(
                             r"Copy link|Copiar enlace", re.IGNORECASE)
                     )
@@ -192,7 +183,7 @@ async def tarea_scraping(page, tema, tiempo_limite_segundos, cantidad_comentario
 
                         # --- VERIFICACIÓN CON PEGADO SIMULADO ---
                         # Espera crítica para el copiado
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(1.5)
 
                         link_pegado = await obtener_clipboard_pegando(page)
                         # print(f"[LinkedIn] [Prueba Ctrl+V]: '{link_pegado}'")
@@ -200,7 +191,7 @@ async def tarea_scraping(page, tema, tiempo_limite_segundos, cantidad_comentario
                         if "linkedin.com" in link_pegado:
                             if link_pegado not in urls_recolectadas:
                                 urls_recolectadas.add(link_pegado)
-                                print(f"[LinkedIn] URL capturada.")
+                                print(f"[LinkedIn] URL capturada: {link_pegado}")
                             else:
                                 print(f"[LinkedIn] Duplicada.")
 
@@ -212,7 +203,6 @@ async def tarea_scraping(page, tema, tiempo_limite_segundos, cantidad_comentario
                         await page.keyboard.press("Escape")
 
             except Exception as e:
-                # Si falla por timeout u otra cosa, imprimimos y cerramos menú por si acaso
                 print(f"[LinkedIn] Error procesando botón: {e}")
                 await page.keyboard.press("Escape")
                 pass
