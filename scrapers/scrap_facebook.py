@@ -34,62 +34,112 @@ async def cargar_sesion(browser, device_settings):
         raise FileNotFoundError(f"Falta el archivo de sesión '{SESSION_FILE}'.")
 
 
-async def extraer_comentarios(page, cantidad_comentarios):
+async def extraer_comentarios(page, cantidad_comentarios, es_comet=False):
     comentarios = []
     # Expresión regular para limpiar caracteres raros de Facebook (PUA)
     regex_raros = re.compile(r'[\uE000-\uF8FF]|\U000F0000-\U000FFFFF|\U00100000-\U0010FFFFF')
 
-    # Palabras que indican que los comentarios aún no han empezado
-    marcadores_inicio = ["más pertinentes", "todos los comentarios", "comentarios"]
-
     try:
-        xpath_comentarios = "//div[@dir='auto']"
-        intentos = 0
-        cantidad_anterior = 0
-        han_empezado_comentarios = False
-
-        while len(comentarios) < cantidad_comentarios and intentos < 3:
-            await page.mouse.wheel(0, 2000)
-            await asyncio.sleep(2)
-
-            elementos = page.locator(xpath_comentarios)
-            count = await elementos.count()
-
-            # Verificación de progreso para el bucle
-            if count == cantidad_anterior:
-                intentos += 1
-            else:
-                intentos = 0
-            cantidad_anterior = count
-
-            for i in range(count):
-                raw_texto = await elementos.nth(i).inner_text()
-                texto_limpio = regex_raros.sub('', raw_texto).strip()
-                texto_limpio = limpiar_texto(texto_limpio.replace("\n", " "))
-
-                if not texto_limpio:
-                    continue
-
-                if not han_empezado_comentarios:
-                    if any(m in texto_limpio.lower() for m in marcadores_inicio):
-                        han_empezado_comentarios = True
-                    continue
-
-                texto_lower = texto_limpio.lower()
-                es_basura = any(x in texto_lower for x in [
-                    "responder", "compartir",
-                    "ver respuestas", "más pertinentes", "autor", "ver las",
-                    "..."
-                ])
-
-                if han_empezado_comentarios and not es_basura:
-                    if len(texto_limpio.split()) > 3 and texto_limpio not in comentarios:
-                        comentarios.append(texto_limpio)
-                        if len(comentarios) >= cantidad_comentarios:
-                            break
-
-            if len(comentarios) < cantidad_comentarios:
+        if es_comet:
+            print("[Facebook] Extrayendo comentarios en diseño Comet...")
+            intentos = 0
+            cantidad_anterior = 0
+            
+            while len(comentarios) < cantidad_comentarios and intentos < 5:
+                # En Comet, los comentarios tienen role="article" y aria-label que contiene "Comentario"
+                elementos = page.locator('div[role="article"][aria-label*="Comentario" i], div[role="article"][aria-label*="comment" i]')
+                count = await elementos.count()
+                
+                if count == cantidad_anterior:
+                    intentos += 1
+                else:
+                    intentos = 0
+                cantidad_anterior = count
+                
+                for i in range(count):
+                    try:
+                        comment_card = elementos.nth(i)
+                        body_elem = comment_card.locator('div[dir="auto"]').first
+                        if await body_elem.count() > 0:
+                            raw_texto = await body_elem.inner_text()
+                            texto_limpio = regex_raros.sub('', raw_texto).strip()
+                            texto_limpio = limpiar_texto(texto_limpio.replace("\n", " "))
+                            
+                            if texto_limpio and len(texto_limpio.split()) > 2:
+                                if texto_limpio not in comentarios:
+                                    comentarios.append(texto_limpio)
+                                    if len(comentarios) >= cantidad_comentarios:
+                                        break
+                    except Exception:
+                        continue
+                        
+                if len(comentarios) >= cantidad_comentarios:
+                    break
+                    
                 print(f"[Facebook] Cargando más comentarios... ({len(comentarios)}/{cantidad_comentarios})")
+                
+                # Scroll dentro del contenedor de comentarios desplazando el último comentario visible
+                if count > 0:
+                    try:
+                        ultimo_elemento = elementos.nth(count - 1)
+                        await ultimo_elemento.scroll_into_view_if_needed()
+                        await asyncio.sleep(2)
+                    except Exception:
+                        await page.mouse.wheel(0, 1000)
+                        await asyncio.sleep(2)
+                else:
+                    await page.mouse.wheel(0, 1000)
+                    await asyncio.sleep(2)
+        else:
+            # Palabras que indican que los comentarios aún no han empezado
+            marcadores_inicio = ["más pertinentes", "todos los comentarios", "comentarios"]
+            xpath_comentarios = "//div[@dir='auto']"
+            intentos = 0
+            cantidad_anterior = 0
+            han_empezado_comentarios = False
+
+            while len(comentarios) < cantidad_comentarios and intentos < 3:
+                await page.mouse.wheel(0, 2000)
+                await asyncio.sleep(2)
+
+                elementos = page.locator(xpath_comentarios)
+                count = await elementos.count()
+
+                # Verificación de progreso para el bucle
+                if count == cantidad_anterior:
+                    intentos += 1
+                else:
+                    intentos = 0
+                cantidad_anterior = count
+
+                for i in range(count):
+                    raw_texto = await elementos.nth(i).inner_text()
+                    texto_limpio = regex_raros.sub('', raw_texto).strip()
+                    texto_limpio = limpiar_texto(texto_limpio.replace("\n", " "))
+
+                    if not texto_limpio:
+                        continue
+
+                    if not han_empezado_comentarios:
+                        if any(m in texto_limpio.lower() for m in marcadores_inicio):
+                            han_empezado_comentarios = True
+                        continue
+
+                    texto_lower = texto_limpio.lower()
+                    es_basura = any(x in texto_lower for x in [
+                        "responder", "compartir",
+                        "ver respuestas", "más pertinentes", "autor", "ver las",
+                        "..."
+                    ])
+
+                    if han_empezado_comentarios and not es_basura:
+                        if len(texto_limpio.split()) > 3 and texto_limpio not in comentarios:
+                            comentarios.append(texto_limpio)
+                            if len(comentarios) >= cantidad_comentarios:
+                                break
+
+                if len(comentarios) < cantidad_comentarios:
+                    print(f"[Facebook] Cargando más comentarios... ({len(comentarios)}/{cantidad_comentarios})")
 
     except Exception as e:
         print(f"[Facebook] Error extrayendo: {e}")
@@ -113,8 +163,16 @@ async def scraping(page, tema, tiempo_limite_segundos, cantidad_comentarios, tie
             print("[Facebook] Límite de tiempo alcanzado al buscar posts.")
             break
 
-        # Localizar los contenedores que identificaste
-        contenedores = await page.locator('div[data-tracking-duration-id]').all()
+        # Detectamos de forma dinámica el diseño de la página
+        es_comet = ("www.facebook.com" in page.url) or (await page.locator('div[aria-posinset], div[role="feed"]').count() > 0)
+
+        if es_comet:
+            print("[Facebook] Detectado diseño Comet (Escritorio)")
+            contenedores = await page.locator('div[aria-posinset]').all()
+        else:
+            print("[Facebook] Detectado diseño WebLite (Móvil)")
+            contenedores = await page.locator('div[data-tracking-duration-id]').all()
+
         encontrados = 0
 
         i = 1
@@ -123,25 +181,36 @@ async def scraping(page, tema, tiempo_limite_segundos, cantidad_comentarios, tie
                 print("[Facebook] Límite de tiempo alcanzado durante el procesamiento de posts.")
                 break
 
-            post_id = await post.get_attribute("data-tracking-duration-id")
-            if post_id in ids_procesados: continue
+            if es_comet:
+                # Usar posinset o generar un ID basado en el índice o texto
+                post_id = await post.get_attribute("aria-posinset")
+                if not post_id:
+                    try:
+                        text_content = await post.inner_text()
+                        post_id = str(hash(text_content))
+                    except Exception:
+                        post_id = f"post_{i}"
+            else:
+                post_id = await post.get_attribute("data-tracking-duration-id")
+
+            if post_id in ids_procesados:
+                continue
 
             try:
-                # Buscar el disparador que mencionaste: "Toca para ver los comentarios..."
-                trigger = post.locator('div[aria-label*="ver los comentarios"]')
+                # Localizar el botón disparador de comentarios (soporta Comet y WebLite)
+                trigger = post.locator('div[aria-label*="comentario" i], div[aria-label*="comentar" i], div[aria-label*="comment" i], div[aria-label*="ver los comentarios" i]')
 
-                if await trigger.is_visible():
+                if await trigger.count() > 0 and await trigger.first.is_visible():
                     print(f"[Facebook] Abriendo post ID: {post_id}")
                     print(f"[Facebook] Procesando post: {i}/{len(contenedores)}")
-                    await trigger.click()
-                    await asyncio.sleep(3) # Esperar carga del post
+                    await trigger.first.click()
+                    await asyncio.sleep(4) # Esperar carga del post
 
                     url_post = page.url
                     print(f"[Facebook] Url del Post: {url_post}")
 
-                    # Extraer comentarios usando tu función
-                    coms = await extraer_comentarios(page, cantidad_comentarios)
-                    #print(f"Comentarios extraidos: {coms}")
+                    # Extraer comentarios
+                    coms = await extraer_comentarios(page, cantidad_comentarios, es_comet)
                     post_data = [url_post, coms]
                     comentarios_totales.append(post_data)
                     print(f"[Facebook] Post procesado. Acumulados: {len(comentarios_totales)} comentarios.")
@@ -157,6 +226,8 @@ async def scraping(page, tema, tiempo_limite_segundos, cantidad_comentarios, tie
             except Exception as e:
                 print(f"[Facebook] Error en post {post_id}: {e}")
                 ids_procesados.add(post_id)
+            
+            i += 1
 
         # Scroll en la lista de búsqueda si necesitamos más posts
         if encontrados == 0:
