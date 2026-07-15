@@ -4,7 +4,7 @@ Este proyecto es una plataforma diseñada para la extracción masiva y concurren
 
 ---
 
-## 🛠️ Tecnologías y Arquitectura
+##  Tecnologías y Arquitectura
 
 El sistema está estructurado de la siguiente forma:
 1. **Scrapers Automatizados (Playwright & Python)**: Orquestador concurrente que maneja múltiples bots asíncronos para simular interacciones reales de usuario y recolectar publicaciones y comentarios.
@@ -13,7 +13,7 @@ El sistema está estructurado de la siguiente forma:
 
 ---
 
-## 🚀 Requisitos e Instalación
+##  Requisitos e Instalación
 
 ### 1. Levantar PostgreSQL (Docker)
 
@@ -41,7 +41,7 @@ playwright install chromium
 
 ---
 
-## 🔑 Gestión de Sesiones (Autenticación)
+##  Gestión de Sesiones (Autenticación)
 
 El sistema funciona **exclusivamente a través de las cookies de sesión guardadas en la carpeta `sesiones/`**:
 
@@ -53,7 +53,7 @@ Si una sesión caduca o no existe, el scraper correspondiente imprimirá un mens
 
 ---
 
-## 💻 Ejecución del Proyecto (Interfaz CLI)
+##  Ejecución del Proyecto (Interfaz CLI)
 
 Para ejecutar una búsqueda interactiva y definir el tema y un tiempo límite de ejecución:
 
@@ -68,7 +68,7 @@ python cli.py
 
 ---
 
-## 📊 Extracción Manual de Datos (Queries SQL)
+##  Extracción Manual de Datos (Queries SQL)
 
 Puedes conectarte directamente al contenedor de PostgreSQL para extraer y consultar manualmente la información recolectada:
 
