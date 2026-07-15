@@ -121,3 +121,74 @@ async def guardar_resultados(resultados):
         print("Resultados persistidos en PostgreSQL.")
     except Exception as e:
         print(f"Error al guardar en base de datos: {e}")
+
+async def exportar_archivos(resultados_runtime, pool=None):
+    os.makedirs("dataset", exist_ok=True)
+    resultados_totales = resultados_runtime
+    
+    if pool is not None:
+        try:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("SELECT id, comentario, red_social, tema, sentimiento, score FROM resultados_sentimientos")
+                if rows:
+                    resultados_totales = [dict(row) for row in rows]
+        except Exception as e:
+            print(f"Error al exportar desde BD, usando resultados de la corrida actual: {e}")
+            
+    df = pd.DataFrame(resultados_totales)
+    df.to_csv("dataset/resultados_sentimientos.csv", index=False, encoding="utf-8")
+    
+    with open("dataset/resultados_sentimientos.json", "w", encoding="utf-8") as f:
+        json.dump(resultados_totales, f, indent=2, ensure_ascii=False)
+    print(f"Exportación unificada completada ({len(resultados_totales)} registros).")
+
+async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["local", "gemini"], default="local")
+    parser.add_argument("--workers", type=int, default=None)
+    args = parser.parse_args()
+    
+    datos = []
+    pool = None
+    try:
+        pool = await conectar_postgres()
+        async with pool.acquire() as conn:
+            rows_comm = await conn.fetch("SELECT id, comentario, red_social, tema FROM comentarios WHERE analizado IS NOT TRUE")
+            rows_posts = await conn.fetch("SELECT id, comentario, red_social, tema FROM posts WHERE analizado IS NOT TRUE")
+            
+            if not rows_comm and not rows_posts:
+                print("No hay registros pendientes. Cargando historicos...")
+                rows_comm = await conn.fetch("SELECT id, comentario, red_social, tema FROM comentarios")
+                rows_posts = await conn.fetch("SELECT id, comentario, red_social, tema FROM posts")
+                
+            dict_total = {}
+            for r in rows_comm + rows_posts:
+                dict_total[r["id"]] = dict(r)
+            datos = list(dict_total.values())
+    except Exception as e:
+        print(f"Error de conexión SQL: {e}")
+        
+    if not datos:
+        if os.path.exists("dataset/comentarios.csv"):
+            print("Cargando fallback desde CSV...")
+            df = pd.read_csv("dataset/comentarios.csv").fillna("")
+            if "id" not in df.columns:
+                df["id"] = [str(i) for i in range(len(df))]
+            datos = df[["id", "comentario", "red_social", "tema"]].to_dict(orient="records")
+            
+    if not datos:
+        print("Error: No se encontraron comentarios para analizar.")
+        return
+        
+    print(f"Iniciando análisis sobre {len(datos)} registros...")
+    if args.mode == "local":
+        num_workers = args.workers if args.workers else os.cpu_count() or 4
+        resultados = ejecutar_local(datos, num_workers)
+    else:
+        resultados = await ejecutar_gemini(datos)
+        
+    await guardar_resultados(resultados)
+    await exportar_archivos(resultados, pool=pool)
+
+if __name__ == "__main__":
+    asyncio.run(main())

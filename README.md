@@ -14,7 +14,6 @@ El sistema está estructurado de la siguiente forma:
 ---
 
 ##  Requisitos e Instalación
-
 ### 1. Levantar PostgreSQL (Docker)
 
 El proyecto incluye un archivo `docker-compose.yml` simplificado que levanta un contenedor de **PostgreSQL** en el puerto `5435`.
