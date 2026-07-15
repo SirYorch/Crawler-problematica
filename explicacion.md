@@ -86,3 +86,53 @@ async def orquestador_principal(tema_busqueda, tiempo_limite_segundos, n_comenta
 ```
 
 ---
+
+##  5. USO ADECUADO Y JUSTIFICACIÓN DE LA TÉCNICA DE PARALELISMO (0.7 Puntos)
+
+### ¿Por qué Concurrencia Asíncrona (`asyncio`) en vez de Procesos (`multiprocessing`) o Hilos (`threading`)?
+
+*   **Identificación del cuello de botella (I/O Bound)**:  
+    La extracción de datos a través de scrapers web es una tarea **limitada por la Entrada/Salida (I/O Bound)**. El programa pasa más del 95% de su tiempo esperando que el servidor web responda las peticiones HTTP, cargue el código JS pesado de las redes sociales y renderice los nodos del DOM de la página. El procesamiento matemático por parte de la CPU es mínimo.
+    
+*   **Decisión de Diseño y Justificación Técnica**:
+    1.  **Inviabilidad de Procesos (`multiprocessing`)**: Ejecutar los tres Scrapers mediante procesos independientes asignaría copias completas del entorno de memoria Python y crearía procesos pesados a nivel de sistema operativo para manejar Chromium. Esto provocaría una sobrecarga dramática de RAM en el sistema del usuario, corriendo el riesgo de saturación y congelamiento del sistema.
+    2.  **Limitación de Hilos Tradicionales (`threading`)**: Los hilos tradicionales en Python están fuertemente limitados por el **GIL (Global Interpreter Lock)** para tareas mixtas de procesamiento de strings. Además, el manejo manual de hilos aumenta la probabilidad de condiciones de carrera (Race Conditions) y sobrecarga del CPU al sincronizar la base de datos PostgreSQL.
+    3.  **Ventaja Directa de `asyncio`**: Al emplear un bucle de eventos reactivo (`Event Loop`), `asyncio` permite abrir y orquestar las tres páginas de Chromium concurrentemente de forma asincrónica. Mientras un scraper espera la descarga de nuevos comentarios, cede el control del Event Loop de forma cooperativa para que el otro scraper procese comentarios en pantalla. Esto reduce la huella de memoria al mínimo y simplifica el guardado y apagado automático seguro tras el vencimiento de la alarma.
+
+---
+
+##  6. ALMACENAMIENTO DE LOS DATOS EXTRAÍDOS Y TRAZABILIDAD (0.5 Puntos)
+
+El almacenamiento se realiza en una base de datos relacional local **PostgreSQL** para organizar y mantener formalmente la integridad de los datos crudos extraídos de múltiples redes de manera concurrente.
+
+### Esquema de la Tabla (`posts`):
+```sql
+CREATE TABLE IF NOT EXISTS posts (
+    id VARCHAR(36) PRIMARY KEY,      -- UUID Único autogenerado
+    post TEXT,                      -- URL directa o ID del post
+    comentario TEXT,                -- Comentario textual crudo
+    red_social VARCHAR(50),         -- Marca de origen ('instagram', 'facebook', 'linkedin')
+    tema VARCHAR(255),              -- Consulta/Tema clave consultado en CLI (ej. 'fifa', 'UFC')
+    analizado BOOLEAN DEFAULT FALSE, -- Estado para posterior análisis de opiniones
+    timestamp TIMESTAMP             -- Fecha y hora exacta de captura
+);
+```
+
+### Garantía de Trazabilidad:
+*   Cada registro garantiza la **trazabilidad formal** de procedencia. Si se analiza el comentario `"Excelente pelea de Holloway, histórico!"`, el registro indica explícitamente que proviene de la red social `instagram`, con tema de búsqueda `UFC`, su URL respectiva de procedencia en la columna `post`, y el sello de tiempo `timestamp` exacto del momento en que el scraper concurrente lo procesó y persistió.
+
+---
+
+##  7. dataset GENERADO Y INTEGRACIÓN CON EL PROYECTO FINAL (0.6 Puntos)
+
+### Dataset Evidenciado:
+El dataset actual cuenta con **1264 comentarios/registros estructurados**, exportados de manera centralizada en formatos planos listos para análisis:
+*   **Formatos**: Archivos planos `.csv` y `.json` accesibles en el directorio [dataset/](file:///home/karen/Documentos/Octavo/paralela/practicas/practica6/Crawler-problematica/dataset).
+*   **Comentarios**: [comentarios.csv](file:///home/karen/Documentos/Octavo/paralela/practicas/practica6/Crawler-problematica/dataset/comentarios.csv) / [comentarios.json](file:///home/karen/Documentos/Octavo/paralela/practicas/practica6/Crawler-problematica/dataset/comentarios.json)
+*   **Publicaciones**: [posts.csv](file:///home/karen/Documentos/Octavo/paralela/practicas/practica6/Crawler-problematica/dataset/posts.csv) / [posts.json](file:///home/karen/Documentos/Octavo/paralela/practicas/practica6/Crawler-problematica/dataset/posts.json)
+
+### Integración en el Proyecto Final:
+Los datos recopilados e historiados asincrónicamente forman el insumo base del proyecto integrador. Este dataset de reacciones al deporte nos permitirá:
+1.  **Modelado de Sentimientos**: Aplicar algoritmos de procesamiento de lenguaje natural (modelos VADER en Python o redes neuronales BERT) sobre la columna `comentario` para clasificar las expresiones afectivas como positivas, negativas o neutras.
+2.  **Storytelling y Visualización**: Graficar la polaridad de reacciones emocionales según la red social (ej. contrastar la negatividad analizada en Facebook vs el tinte más profesional de LinkedIn ante patrocinios de FIFA).
+3.  **Extrapolación Temporal**: Determinar momentos de picos emocionales de las competencias deportivas a nivel global en la era digital.
