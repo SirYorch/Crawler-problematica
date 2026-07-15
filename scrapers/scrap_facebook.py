@@ -97,12 +97,10 @@ async def extraer_comentarios(page, cantidad_comentarios):
     return comentarios
 
 
-async def scraping(page, tema, cantidad_posts, cantidad_comentarios):
+async def scraping(page, tema, tiempo_limite_segundos, cantidad_comentarios, tiempo_inicio):
     print(f"[Facebook] Buscando: '{tema}'")
     comentarios_totales = []
     ids_procesados = set()
-    # MODIFICACIÓN: Mínimo requerido más 5 de margen
-    objetivo_posts = cantidad_posts + 5
 
     #search_url = f"https://m.facebook.com/search/posts/?q={tema}"
     search_url = f"https://m.facebook.com/search_results/?q={tema}"
@@ -110,15 +108,20 @@ async def scraping(page, tema, cantidad_posts, cantidad_comentarios):
     await asyncio.sleep(5)
 
     intentos_scrolling = 0
-    max_comentarios = cantidad_comentarios*cantidad_posts
-    while len(ids_procesados) < objetivo_posts and intentos_scrolling < 3:
+    while intentos_scrolling < 3:
+        if time.time() - tiempo_inicio >= tiempo_limite_segundos:
+            print("[Facebook] Límite de tiempo alcanzado al buscar posts.")
+            break
+
         # Localizar los contenedores que identificaste
         contenedores = await page.locator('div[data-tracking-duration-id]').all()
         encontrados = 0
 
         i = 1
         for post in contenedores:
-            if len(ids_procesados) >= cantidad_posts: break
+            if time.time() - tiempo_inicio >= tiempo_limite_segundos:
+                print("[Facebook] Límite de tiempo alcanzado durante el procesamiento de posts.")
+                break
 
             post_id = await post.get_attribute("data-tracking-duration-id")
             if post_id in ids_procesados: continue
@@ -139,11 +142,9 @@ async def scraping(page, tema, cantidad_posts, cantidad_comentarios):
                     # Extraer comentarios usando tu función
                     coms = await extraer_comentarios(page, cantidad_comentarios)
                     #print(f"Comentarios extraidos: {coms}")
-                    post = [url_post, coms]
-                    comentarios_totales.append(post)
+                    post_data = [url_post, coms]
+                    comentarios_totales.append(post_data)
                     print(f"[Facebook] Post procesado. Acumulados: {len(comentarios_totales)} comentarios.")
-                    if len(comentarios_totales) >= max_comentarios:
-                        return comentarios_totales
                     ids_procesados.add(post_id)
                     encontrados += 1
 
@@ -159,6 +160,8 @@ async def scraping(page, tema, cantidad_posts, cantidad_comentarios):
 
         # Scroll en la lista de búsqueda si necesitamos más posts
         if encontrados == 0:
+            if time.time() - tiempo_inicio >= tiempo_limite_segundos:
+                break
             await page.mouse.wheel(0, 2000)
             await asyncio.sleep(3)
             intentos_scrolling += 1
@@ -167,7 +170,7 @@ async def scraping(page, tema, cantidad_posts, cantidad_comentarios):
     return comentarios_totales
 
 
-async def iniciar_scrapping(tema, n_posts, n_comentarios, id):
+async def iniciar_scrapping(tema, tiempo_limite_segundos, n_comentarios, id):
     async with async_playwright() as p:
         # Configuramos la emulación móvil
         device = p.devices['Pixel 7']
@@ -184,7 +187,7 @@ async def iniciar_scrapping(tema, n_posts, n_comentarios, id):
         context, page = await cargar_sesion(browser, device)
 
         print("--- [Facebook] Extrayendo comentarios ---")
-        comentarios = await scraping(page, tema, n_posts, n_comentarios)
+        comentarios = await scraping(page, tema, tiempo_limite_segundos, n_comentarios, tiempo_inicio)
 
         tiempo_fin = time.time()
         tiempo_total_scraping = tiempo_fin - tiempo_inicio
@@ -196,10 +199,11 @@ async def iniciar_scrapping(tema, n_posts, n_comentarios, id):
         await browser.close()
 
         print("--- [Facebook] Guardando comentarios ---")
-        #guardar_comentarios_csv(comentarios, tema, "Facebook")
-        #await guardar_comentarios(comentarios, tema, "Facebook")
-        #print(f"Comentarios: {comentarios}")
         await guardar_posts(comentarios, tema, "Facebook")
+        
+        comentarios_planos = [comm for _, post_comms in comentarios for comm in post_comms]
+        if comentarios_planos:
+            await guardar_comentarios(comentarios_planos, tema, "Facebook")
 
         #tiempo_inicio = time.time()
         #print("--- [Facebook] Analizando comentarios ---")
@@ -214,4 +218,4 @@ async def iniciar_scrapping(tema, n_posts, n_comentarios, id):
 
 
 if __name__ == "__main__":
-    asyncio.run(iniciar_scrapping("nicolas muñoz", 50, 100))
+    asyncio.run(iniciar_scrapping("nicolas muñoz", 30, 5, None))

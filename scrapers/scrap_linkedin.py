@@ -118,14 +118,12 @@ async def extraer_comentarios_post(page, cantidad_objetivo):
     return comentarios
 
 
-async def tarea_scraping(page, tema, cantidad_posts, cantidad_comentarios):
+async def tarea_scraping(page, tema, tiempo_limite_segundos, cantidad_comentarios, tiempo_inicio):
     print(f"[LinkedIn] BUSCANDO EN LINKEDIN: '{tema}'")
     comentarios_totales = []
-    max_comentarios = cantidad_comentarios * cantidad_posts
     try:
         # 1. Búsqueda
-        url_busqueda = f"https://www.linkedin.com/search/results/content/?keywords={
-            tema}&origin=GLOBAL_SEARCH_HEADER"
+        url_busqueda = f"https://www.linkedin.com/search/results/content/?keywords={tema}&origin=GLOBAL_SEARCH_HEADER"
         await page.goto(url_busqueda, wait_until='domcontentloaded')
 
         # Esperamos al contenedor de resultados
@@ -135,6 +133,8 @@ async def tarea_scraping(page, tema, cantidad_posts, cantidad_comentarios):
 
         # Scroll inicial
         for _ in range(3):
+            if time.time() - tiempo_inicio >= tiempo_limite_segundos:
+                break
             await page.mouse.wheel(0, 3000)
             await asyncio.sleep(2)
 
@@ -146,8 +146,15 @@ async def tarea_scraping(page, tema, cantidad_posts, cantidad_comentarios):
         print(f"[LinkedIn] Analizando {count} publicaciones...")
 
         for i in range(count):
-            # print("[LinkedIn] Siguiente post")
-            if len(urls_recolectadas) >= cantidad_posts:
+            # Límite de búsqueda: 30% del tiempo total o mínimo 10 segundos para buscar
+            tiempo_busqueda_transcurrido = time.time() - tiempo_inicio
+            max_tiempo_busqueda = max(10.0, tiempo_limite_segundos * 0.3)
+            if tiempo_busqueda_transcurrido >= max_tiempo_busqueda:
+                print("[LinkedIn] Se alcanzó el límite de tiempo asignado para la búsqueda de posts.")
+                break
+
+            # Evitar recolectar demasiados posts en ejecuciones cortas
+            if len(urls_recolectadas) >= 10:
                 break
 
             try:
@@ -216,6 +223,10 @@ async def tarea_scraping(page, tema, cantidad_posts, cantidad_comentarios):
         # 3. Visita y Extracción
         i = 1
         for url in lista_urls:
+            if time.time() - tiempo_inicio >= tiempo_limite_segundos:
+                print("[LinkedIn] Límite de tiempo alcanzado durante el procesamiento de posts.")
+                break
+
             print(f"[LinkedIn] Procesando post: {url}, post {i}/{len(lista_urls)}")
             try:
                 i += 1
@@ -225,8 +236,6 @@ async def tarea_scraping(page, tema, cantidad_posts, cantidad_comentarios):
                 post = [url, nuevos]
                 print(f"[LinkedIn] Comentarios extraidos del post: {len(nuevos)}")
                 comentarios_totales.append(post)
-                if len(comentarios_totales) >= max_comentarios:
-                    break
             except Exception as e:
                 print(f"[LinkedIn] Error navegando: {e}")
 
@@ -237,7 +246,7 @@ async def tarea_scraping(page, tema, cantidad_posts, cantidad_comentarios):
 
 
 # --- ENTRADA PARA ORQUESTADOR ---
-async def iniciar_scrapping(tema, cantidad_posts, cantidad_comentarios, id):
+async def iniciar_scrapping(tema, tiempo_limite_segundos, cantidad_comentarios, id):
     async with async_playwright() as p:
         launch_args = {"headless": False, "args": ["--disable-notifications"]}
         if BROWSER_EXECUTABLE_PATH:
@@ -251,7 +260,7 @@ async def iniciar_scrapping(tema, cantidad_posts, cantidad_comentarios, id):
 
 
         print("--- [LinkedIn] Extrayendo comentarios ---")
-        comentarios = await tarea_scraping(page, tema, cantidad_posts, cantidad_comentarios)
+        comentarios = await tarea_scraping(page, tema, tiempo_limite_segundos, cantidad_comentarios, tiempo_inicio)
 
         tiempo_fin = time.time()
         tiempo_total_scraping = tiempo_fin - tiempo_inicio
@@ -263,9 +272,11 @@ async def iniciar_scrapping(tema, cantidad_posts, cantidad_comentarios, id):
         await browser.close()
 
         print("--- [LinkedIn] Guardando comentarios ---")
-        #guardar_comentarios_csv(comentarios, tema, "LinkedIn")
-        #await guardar_comentarios(comentarios, tema, "LinkedIn")
         await guardar_posts(comentarios, tema, "LinkedIn")
+        
+        comentarios_planos = [comm for _, post_comms in comentarios for comm in post_comms]
+        if comentarios_planos:
+            await guardar_comentarios(comentarios_planos, tema, "LinkedIn")
 
         #tiempo_inicio = time.time()
         #print("--- [LinkedIn] Analizando comentarios ---")
@@ -279,4 +290,4 @@ async def iniciar_scrapping(tema, cantidad_posts, cantidad_comentarios, id):
 
 
 if __name__ == "__main__":
-    asyncio.run(iniciar_scrapping("venezuela", 3, 10))
+    asyncio.run(iniciar_scrapping("venezuela", 30, 10, None))

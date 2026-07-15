@@ -100,26 +100,30 @@ async def extraer_comentarios(page, cantidad_comentarios):
     return comentarios
 
 
-async def scraping(page, tema, cantidad_posts, cantidad_comentarios):
+async def scraping(page, tema, tiempo_limite_segundos, cantidad_comentarios, tiempo_inicio):
     print(f"[Instagram] BUSCANDO TEMA: '{tema}'")
     comentarios_total = []
-    max_comentarios = cantidad_posts * cantidad_comentarios
     try:
         await page.goto(f"https://www.instagram.com/explore/search/keyword/?q={tema}")
         await asyncio.sleep(5)
 
-        #link_locators = page.locator('a[href*="/p/"]').all()
-        #links_posts = await link_locators
-
         urls = []
         intentos = 0
         max_intentos = 10
-        # MODIFICACIÓN: Mínimo requerido más 5 de margen
-        objetivo_posts = cantidad_posts + 5
 
-        while len(urls) < objetivo_posts and intentos < max_intentos:
+        while intentos < max_intentos:
+            # Límite de búsqueda: 30% del tiempo total o mínimo 10 segundos para buscar
+            tiempo_busqueda_transcurrido = time.time() - tiempo_inicio
+            max_tiempo_busqueda = max(10.0, tiempo_limite_segundos * 0.3)
+            if tiempo_busqueda_transcurrido >= max_tiempo_busqueda:
+                print("[Instagram] Se alcanzó el límite de tiempo asignado para la búsqueda de posts.")
+                break
+
+            # Evitar recolectar demasiados posts en ejecuciones cortas
+            if len(urls) >= 10:
+                break
+
             elementos_link = await page.locator('a[href*="/p/"]').all()
-
             cantidad_antes = len(urls)
 
             for elemento in elementos_link:
@@ -128,23 +132,24 @@ async def scraping(page, tema, cantidad_posts, cantidad_comentarios):
                     full_url = f"https://www.instagram.com{href}"
                     if full_url not in urls:
                         urls.append(full_url)
-                if len(urls) >= objetivo_posts:
-                    break
 
-            if len(urls) < objetivo_posts:
-                print(f"[Instagram] Buscando más posts... ({len(urls)}/{objetivo_posts})")
-                await page.mouse.wheel(0, 4000)
-                await asyncio.sleep(random.uniform(2, 4))
+            print(f"[Instagram] Buscando más posts... ({len(urls)} encontrados)")
+            await page.mouse.wheel(0, 4000)
+            await asyncio.sleep(random.uniform(2, 4))
 
-                if len(urls) == cantidad_antes:
-                    intentos += 1
-                else:
-                    intentos = 0
+            if len(urls) == cantidad_antes:
+                intentos += 1
+            else:
+                intentos = 0
 
-        print(f"[Instagram] Se encontraron {len(urls)} posts para revisar (incluyendo margen de seguridad)")
+        print(f"[Instagram] Se encontraron {len(urls)} posts para revisar")
 
         i = 1
         for url in urls:
+            if time.time() - tiempo_inicio >= tiempo_limite_segundos:
+                print("[Instagram] Límite de tiempo alcanzado durante el procesamiento de posts.")
+                break
+
             print(f"[Instagram] Procesando post: {url}, post {i}/{len(urls)}")
             try:
                 i += 1
@@ -154,22 +159,18 @@ async def scraping(page, tema, cantidad_posts, cantidad_comentarios):
                 comentarios = await extraer_comentarios(page, cantidad_comentarios)
                 post = [url, comentarios]
                 comentarios_total.append(post)
-
-                if len(comentarios) >= max_comentarios:
-                    break
             except Exception as e:
                 print(f"[Instagram] Error al acceder al post {url}: {e}")
                 continue
     except Exception as e:
         print(f"[Instagram] Error en scraping: {e}")
-        # Importante para debuggear: ver dónde falló
         import traceback
         traceback.print_exc()
 
     return comentarios_total
 
 
-async def iniciar_scrapping(tema, n_posts, n_comentarios, id):
+async def iniciar_scrapping(tema, tiempo_limite_segundos, n_comentarios, id):
     async with async_playwright() as p:
         # Configuración del navegador
         launch_args = {
@@ -181,8 +182,6 @@ async def iniciar_scrapping(tema, n_posts, n_comentarios, id):
         if BROWSER_EXECUTABLE_PATH:
             launch_args["executable_path"] = BROWSER_EXECUTABLE_PATH
 
-        tiempo_inicio_total = time.time()
-
         tiempo_inicio = time.time()
         browser = await p.chromium.launch(**launch_args)
 
@@ -191,7 +190,7 @@ async def iniciar_scrapping(tema, n_posts, n_comentarios, id):
 
         # --- EJECUCIÓN DE LA TAREA ---
         print("--- [Instagram] Extrayendo comentarios ---")
-        comentarios = await scraping(page, tema, n_posts, n_comentarios)
+        comentarios = await scraping(page, tema, tiempo_limite_segundos, n_comentarios, tiempo_inicio)
 
 
         tiempo_fin = time.time()
@@ -203,9 +202,11 @@ async def iniciar_scrapping(tema, n_posts, n_comentarios, id):
         await browser.close()
 
         print("--- [Instagram] Guardando comentarios ---")
-        #guardar_comentarios_csv(comentarios, tema, "Instagram")
-        #await guardar_comentarios(comentarios, tema, "Instagram")
         await guardar_posts(comentarios, tema, "Instagram")
+        
+        comentarios_planos = [comm for _, post_comms in comentarios for comm in post_comms]
+        if comentarios_planos:
+            await guardar_comentarios(comentarios_planos, tema, "Instagram")
 
         #tiempo_inicio = time.time()
         #print("--- [Instagram] Analizando comentarios ---")
@@ -221,4 +222,4 @@ async def iniciar_scrapping(tema, n_posts, n_comentarios, id):
 
 
 if __name__ == "__main__":
-    asyncio.run(iniciar_scrapping("nicolas muñoz", 50, 100))
+    asyncio.run(iniciar_scrapping("nicolas muñoz", 30, 5, None))

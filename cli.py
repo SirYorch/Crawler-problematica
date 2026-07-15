@@ -16,21 +16,17 @@ async def main():
             print("❌ El tema a investigar no puede estar vacío.")
             return
             
-        # 2. Tiempo de ejecución límite
-        tiempo_raw = input("⏱️ Ingrese el tiempo límite de ejecución en minutos [default: 5.0]: ").strip()
-        if not tiempo_raw:
-            tiempo_minutos = 5.0
-        else:
-            try:
-                tiempo_minutos = float(tiempo_raw)
-            except ValueError:
-                print("❌ El tiempo debe ser un número decimal válido.")
-                return
-                
-        # 3. Parámetros opcionales adicionales
-        n_posts_raw = input("📮 Ingrese cantidad de posts por red social [default: 3]: ").strip()
-        n_posts = int(n_posts_raw) if n_posts_raw else 3
+        # 2. Tiempo de ejecución límite (minutos y segundos)
+        minutos_raw = input("⏱️ Ingrese el tiempo límite de ejecución en minutos [default: 0]: ").strip()
+        minutos = float(minutos_raw) if minutos_raw else 0.0
+
+        segundos_raw = input("⏱️ Ingrese el tiempo límite de ejecución en segundos [default: 30]: ").strip()
+        segundos = float(segundos_raw) if segundos_raw else 30.0
         
+        tiempo_segundos = (minutos * 60) + segundos
+        if tiempo_segundos <= 0:
+            tiempo_segundos = 30.0
+            
         n_comentarios_raw = input("💬 Ingrese comentarios por post [default: 10]: ").strip()
         n_comentarios = int(n_comentarios_raw) if n_comentarios_raw else 10
         
@@ -38,24 +34,22 @@ async def main():
         print("\n👋 Ejecución cancelada por el usuario.")
         return
 
-    tiempo_segundos = tiempo_minutos * 60
-    
     print("\n" + "-" * 50)
     print(f"Iniciando extracción para: '{tema}'")
-    print(f"Parámetros: {n_posts} posts, {n_comentarios} comentarios")
-    print(f"Tiempo máximo de ejecución: {tiempo_minutos} minutos ({tiempo_segundos} segundos)")
+    print(f"Parámetros: {n_comentarios} comentarios por post")
+    print(f"Tiempo máximo de ejecución: {tiempo_segundos} segundos")
     print("-" * 50 + "\n")
     
     inicio_time = time.time()
     try:
-        # Envolver la ejecución concurrente en un límite de tiempo
+        # Envolver la ejecución concurrente en un límite de tiempo con un buffer de seguridad
         await asyncio.wait_for(
-            orquestador_principal(tema, n_posts, n_comentarios),
-            timeout=tiempo_segundos
+            orquestador_principal(tema, tiempo_segundos, n_comentarios),
+            timeout=tiempo_segundos + 15
         )
         print("\n✅ Proceso de extracción completado exitosamente dentro del tiempo límite.")
     except asyncio.TimeoutError:
-        print(f"\n⚠️ [Límite de Tiempo Alcanzado] Se cumplió el tiempo límite de {tiempo_minutos} minutos.")
+        print(f"\n⚠️ [Límite de Tiempo Alcanzado] Se cumplió el tiempo límite de {tiempo_segundos} segundos (más buffer).")
         print("La extracción se interrumpió de manera segura y los datos recolectados hasta el momento han sido guardados en PostgreSQL.")
     except Exception as e:
         print(f"\n❌ Se produjo un error durante la extracción: {e}")
