@@ -1,7 +1,7 @@
 # Documentación Explicativa de la Práctica 7
-## Análisis Paralelo y Concurrente de Sentimientos en Redes Sociales
+## Análisis Paralelo de Sentimientos en Redes Sociales
 
-Este documento contiene el diseño de ingeniería y la descripción detallada de la clasificación afectiva para la **Práctica de Laboratorio 07**, cumpliendo de forma rigurosa con los criterios de evaluación especificados en la rúbrica de la materia de Computación Paralela (Universidad Politécnica Salesiana).
+Este documento contiene el diseño de ingeniería y la descripción detallada de la clasificación afectiva local para la **Práctica de Laboratorio 07**, cumpliendo de forma rigurosa con los criterios de evaluación especificados en la rúbrica de la materia de Computación Paralela (Universidad Politécnica Salesiana).
 
 ---
 
@@ -16,13 +16,11 @@ El análisis de sentimientos consume directamente el dataset recopilado de forma
 
 ## 2. Propuesta y Justificación del Modelo de Análisis de Sentimientos (0.8 Puntos)
 
-Se proponen dos modelos de NLP dentro de la misma solución para dar versatilidad ante distintos recursos e infraestructura:
-
-### Opción A (Local / Predeterminada): VADER Sentiment (Valence Aware Dictionary and Sentiment Reasoner)
+### Modelo Seleccionado: VADER Sentiment (Valence Aware Dictionary and Sentiment Reasoner)
 *   **Justificación**: VADER es un clasificador basado en reglas muy ligero especialmente sintonizado con el sentimiento expresado en micro-mensajes de redes sociales.
-*   **¿Por qué VADER sobre alternativas pesadas como BERT o LLMs locales?**: 
-    1.  **Requisitos de Hardware**: Modelos tipo Transformer requieren GPUs dedicadas y gigabytes de RAM. VADER corre de forma ultrarrápida en CPUs ordinarias con mínima huella de memoria.
-    2.  **Optimización de Expresión Digital**: Es ávido para valorar la intensidad emocional de textos cortos de fanáticos deportivos mediante:
+*   **¿Por qué VADER sobre alternativas pesadas como BERT o LLMs locales?**:
+    1.  **Requisitos de Hardware**: Modelos orientados a Deep Learning (como BERT o RoBERTa) requieren GPUs dedicadas para inferencia eficiente. VADER funciona de forma extremadamente ágil sobre CPU estándar con un consumo de recursos ínfimo.
+    2.  **Optimización de Expresión Digital**: Es ávido para evaluar la intensidad emocional de textos cortos de fanáticos deportivos mediante:
         -   **Emojis**: Asigna polaridad a caracteres Emoji (ej. "🔥" es positivo, "😡" es negativo). Esto es crítico en la era digital deportiva.
         -   **Mayúsculas y Puntuación**: Interpreta que `"GOOOOL!!!"` o `"PESIMO arbitraje"` expresan mayor nivel afectivo que el texto plano normal.
 *   **Clasificación de Sentimientos**: VADER entrega un puntaje compuesto de polaridad ajustado en el rango de `[-1.0, 1.0]`. Los textos son catalogados según el estándar académico de NLP:
@@ -30,16 +28,13 @@ Se proponen dos modelos de NLP dentro de la misma solución para dar versatilida
     -   **Neutral**: `-0.05 < score < 0.05`
     -   **Negativo**: `score <= -0.05`
 
-### Opción B: Google Gemini API (Modo Cloud)
-*   **Justificación**: Para capturar complejidades gramaticales mayores, modismos locales o ironías directas de la fanaticada, el script puede alternarse al modelo fundacional `gemini-2.5-flash` mediante prompt engineering estructurado. Sirve como un fallback avanzado cuando se requiere precisión semántica profunda de contextos informales y jergas.
-
 ---
 
 ## 3. DISEÑO DE LA SOLUCIÓN PARALELA O CONCURRENTE (0.7 Puntos)
 
-A continuación se presentan los diagramas de flujo correspondientes a las dos opciones de ejecución independientes:
+A continuación se presenta el diagrama de flujo correspondiente al procesamiento local independiente:
 
-### Opción 1: Procesamiento Local con Pool de Hilos (CPU-Bound)
+### Procesamiento Local con Pool de Hilos (CPU-Bound)
 Este flujo representa la extracción de datos y el procesamiento local secuencial-paralelo mediante hilos para el cálculo de polaridad con VADER:
 
 ```mermaid
@@ -54,29 +49,10 @@ graph TD
     Merge --> SaveFile[Exportar dataset/resultados_sentimientos.csv y .json]
 ```
 
-### Opción 2: Procesamiento Cloud Asíncrono (I/O-Bound)
-Este flujo representa el envío de solicitudes HTTP concurrentes a la API de Gemini mediante el lazo de eventos de Asyncio y control de concurrencia mediante semáforos:
-
-```mermaid
-graph TD
-    Data[Cargar registros desde DB/CSV] --> SelectAPI[Asignar cliente Gemini API]
-    SelectAPI --> Semaphore[Asignar asyncio.Semaphore límite 15]
-    Semaphore --> AsyncGather[Ejecutar asyncio.gather]
-    AsyncGather -->|Task 1| G1[Llamar modelo gemini-2.5-flash]
-    AsyncGather -->|Task 2| G2[Llamar modelo gemini-2.5-flash]
-    AsyncGather -->|Task N| GN[Llamar modelo gemini-2.5-flash]
-    G1 & G2 & GN --> SyncReturn[Esperar respuestas completas]
-    SyncReturn --> SaveDB[(Insertar en resultados_sentimientos PostgreSQL)]
-    SyncReturn --> SaveFile[Exportar dataset/resultados_sentimientos.csv y .json]
-```
-
 ---
 
 ## 4. IMPLEMENTACIÓN FUNCIONAL Y USO ADECUADO DE TÉCNICAS DE PARALELISMO (1.8 Puntos)
 
-La arquitectura de paralelización se selecciona adaptándose al tipo de carga del sistema:
-
-### Opción 1: Procesamiento por Pool de Hilos (VADER Local - CPU-Bound)
 El análisis léxico local de miles de registros de texto exige capacidad de cálculo del procesador local.
 *   **Justificación de Hilos (`ThreadPoolExecutor`) frente a Procesos (`multiprocessing`)**: 
     1.  **Memoria Compartida**: Los hilos nativos comparten el espacio de memoria del script principal. Esto evita la necesidad de serializar los miles de comentarios y duplicar las variables de análisis en múltiples procesos del sistema operativo, reduciendo drásticamente la latencia de orquestación y el uso de RAM.
@@ -86,24 +62,10 @@ El procesamiento paralelo en hilos se ejecuta llamando a la clase `ThreadPoolExe
 
 ```python
 # analisis_sentimientos.py
-def ejecutar_local(datos, num_workers):
+def ejecutar_analisis_paralelo(datos, num_workers):
     entradas = [(d["id"], d["comentario"], d["red_social"], d["tema"]) for d in datos]
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         return list(executor.map(clasificar_comentario, entradas))
-```
-
-### Opción 2: Procesamiento Cloud Asíncrono (Gemini API - I/O-Bound)
-En este modo, el cuello de botella es la latencia de las solicitudes HTTP sobre la red a la API en la nube (tiempo muerto del procesador esperando respuestas del hosting).
-*   **Justificación de Asincronía sobre Hilos/Procesos**: 
-    1.  **Concurrencia Liviana**: `asyncio` permite disparar cientos de conexiones simultáneas sin bloquear el subproceso del sistema, gestionando las respuestas a través del lazo de eventos (Event Loop) sin el gasto y la sobrecarga del cambio de contexto de hilos físicos.
-    2.  **Control de Tasa**: Se utiliza un semáforo asíncrono para limitar la concurrencia a máximo 15 llamadas simultáneas, evitando bloqueos por exceder las cuotas de peticiones permitidas por el proveedor (Rate Limits).
-
-En caso de elegir la opción Cloud, el flujo utiliza la API asíncrona mediante el mecanismo de **`asyncio`**:
-```python
-async def clasificar_gemini(client, semaforo, item):
-    ...
-    async with semaforo:
-        # Peticion asíncrona a la API externa
 ```
 
 ---
@@ -146,10 +108,10 @@ Específicamente, se producen los siguientes archivos:
 
 ### Conclusiones
 1.  **Optimización por Aislamiento de Recursos**: La arquitectura modular propuesta permitió separar el análisis de sentimientos del flujo del scraper, logrando que el procesamiento de datos históricos del dataset de 1264 registros se realice en milisegundos sin sobrecargar el flujo de extracción web.
-2.  **Idoneidad en la Elección de Técnicas**: La concurrencia asíncrona demostró ser el método óptimo para mitigar los cuellos de botella de red (I/O Bound) al hacer llamadas hacia la API de Gemini, mientras que la paralelización en hilos mediante `ThreadPoolExecutor` maximizó el procesamiento del lexicon de VADER para clasificar en el lado del servidor local (CPU Bound).
-3.  **Hibridación como Escalabilidad**: Proveer ambas opciones (local y externa) asegura un sistema tolerante a fallas; si los límites de consumo o tarifas de red restringen las llamadas a la nube, el sistema continúa funcionando a máxima velocidad en local enriqueciendo el registro con trazabilidad.
+2.  **Idoneidad en la Elección de Técnicas**: La paralelización en hilos mediante `ThreadPoolExecutor` maximizó el procesamiento del lexicon de VADER para clasificar en el lado del servidor local, logrando una concurrencia eficiente y de baja latencia.
+3.  **Memoria Compartida y Baja Latencia**: El uso de hilos a través de `ThreadPoolExecutor` demostró ser óptimo para esquemas ligeros de NLP en CPU, ya que su espacio de memoria compartido reduce los retrasos ocasionados por la copia de variables grandes hacia procesos separados.
 
 ### Recomendaciones
 1.  **Mantenimiento de Limpieza**: Se aconseja preprocesar y limpiar caracteres basura de los textos scraped (como saltos de línea reiterativos u URLs irrelevantes) antes del análisis de opiniones para optimizar el cálculo léxico y la precisión de la correlación de puntuación.
 2.  **Sintonización de Paralelismo**: Se recomienda monitorear y ajustar el número óptimo de trabajadores (`workers`) en función de la capacidad de procesamiento de la CPU física para evitar sobrecargas de balanceo de contexto.
-3.  **Seguridad y Gestión de Secretos**: Utilizar de manera mandatoria variables de entorno protegidas para el almacenamiento y lectura de la clave `GEMINI_API_KEY`, evitando exponer credenciales en el repositorio público de GitHub.
+3.  **Traducción del Texto Original**: Dado que VADER cuenta con un lexicón optimizado en el idioma inglés, se sugiere sintonizar o traducir comentarios formales en español a través de pre-procesamiento si se incrementa la escala del proyecto para un mayor nivel de asimilación semántica.

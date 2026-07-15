@@ -12,12 +12,8 @@ def clasificar_comentario(item):
     id_cmt, comentario, red_social, tema = item
     if not comentario or not isinstance(comentario, str):
         return {
-            "id": id_cmt,
-            "comentario": "",
-            "red_social": red_social,
-            "tema": tema,
-            "sentimiento": "Neutral",
-            "score": 0.0
+            "id": id_cmt, "comentario": "", "red_social": red_social, 
+            "tema": tema, "sentimiento": "Neutral", "score": 0.0
         }
     
     analyzer = SentimentIntensityAnalyzer()
@@ -40,53 +36,10 @@ def clasificar_comentario(item):
         "score": compound
     }
 
-def ejecutar_local(datos, num_workers):
+def ejecutar_analisis_paralelo(datos, num_workers):
     entradas = [(d["id"], d["comentario"], d["red_social"], d["tema"]) for d in datos]
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         return list(executor.map(clasificar_comentario, entradas))
-
-async def clasificar_gemini(client, semaforo, item):
-    id_cmt, comentario, red_social, tema = item
-    if not comentario or not isinstance(comentario, str):
-        return {
-            "id": id_cmt,
-            "comentario": "",
-            "red_social": red_social,
-            "tema": tema,
-            "sentimiento": "Neutral",
-            "score": 0.0
-        }
-        
-    async with semaforo:
-        try:
-            if not os.getenv("GEMINI_API_KEY"):
-                res = clasificar_comentario(item)
-                await asyncio.sleep(0.01)
-                return res
-            # Simulación o llamada real
-            return {
-                "id": id_cmt,
-                "comentario": comentario,
-                "red_social": red_social,
-                "tema": tema,
-                "sentimiento": "Positivo",
-                "score": 1.0
-            }
-        except Exception:
-            return {
-                "id": id_cmt,
-                "comentario": comentario,
-                "red_social": red_social,
-                "tema": tema,
-                "sentimiento": "Neutral",
-                "score": 0.0
-            }
-
-async def ejecutar_gemini(datos):
-    semaforo = asyncio.Semaphore(15)
-    entradas = [(d["id"], d["comentario"], d["red_social"], d["tema"]) for d in datos]
-    tareas = [clasificar_gemini(None, semaforo, item) for item in entradas]
-    return await asyncio.gather(*tareas)
 
 async def guardar_resultados(resultados):
     try:
@@ -112,13 +65,13 @@ async def guardar_resultados(resultados):
                 await conn.executemany("""
                 INSERT INTO resultados_sentimientos (id, comentario, red_social, tema, sentimiento, score)
                 VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT (id) DO UPDATE SET sentimiento = EXCLUDED.sentimiento, score = EXCLUDED.score
+                ON CONFLICT (id) DO UPDATE SET sentimiento = EXCLUDED.sentimiento, score = EXCLUDED.score;
                 """, records)
                 
                 ids = [r["id"] for r in resultados]
                 await conn.execute("UPDATE comentarios SET analizado = TRUE WHERE id = ANY($1)", ids)
                 await conn.execute("UPDATE posts SET analizado = TRUE WHERE id = ANY($1)", ids)
-        print("Resultados persistidos en PostgreSQL.")
+        print("Resultados guardados en base de datos.")
     except Exception as e:
         print(f"Error al guardar en base de datos: {e}")
 
@@ -133,18 +86,17 @@ async def exportar_archivos(resultados_runtime, pool=None):
                 if rows:
                     resultados_totales = [dict(row) for row in rows]
         except Exception as e:
-            print(f"Error al exportar desde BD, usando resultados de la corrida actual: {e}")
+            print(f"No se pudo consultar la BD para exportar, usando resultados locales: {e}")
             
     df = pd.DataFrame(resultados_totales)
     df.to_csv("dataset/resultados_sentimientos.csv", index=False, encoding="utf-8")
     
     with open("dataset/resultados_sentimientos.json", "w", encoding="utf-8") as f:
         json.dump(resultados_totales, f, indent=2, ensure_ascii=False)
-    print(f"Exportación unificada completada ({len(resultados_totales)} registros).")
+    print(f"Dataset exportado ({len(resultados_totales)} comentarios).")
 
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["local", "gemini"], default="local")
     parser.add_argument("--workers", type=int, default=None)
     args = parser.parse_args()
     
@@ -166,27 +118,25 @@ async def main():
                 dict_total[r["id"]] = dict(r)
             datos = list(dict_total.values())
     except Exception as e:
-        print(f"Error de conexión SQL: {e}")
+        print(f"Error al conectar con PostgreSQL: {e}")
         
     if not datos:
         if os.path.exists("dataset/comentarios.csv"):
-            print("Cargando fallback desde CSV...")
+            print("Cargando desde dataset/comentarios.csv...")
             df = pd.read_csv("dataset/comentarios.csv").fillna("")
             if "id" not in df.columns:
                 df["id"] = [str(i) for i in range(len(df))]
             datos = df[["id", "comentario", "red_social", "tema"]].to_dict(orient="records")
             
     if not datos:
-        print("Error: No se encontraron comentarios para analizar.")
+        print("Error: No hay datos disponibles para el análisis.")
         return
         
-    print(f"Iniciando análisis sobre {len(datos)} registros...")
-    if args.mode == "local":
-        num_workers = args.workers if args.workers else os.cpu_count() or 4
-        resultados = ejecutar_local(datos, num_workers)
-    else:
-        resultados = await ejecutar_gemini(datos)
-        
+    print(f"Indexando {len(datos)} registros para análisis de sentimientos...")
+    num_workers = args.workers if args.workers else os.cpu_count() or 4
+    
+    resultados = ejecutar_analisis_paralelo(datos, num_workers)
+    
     await guardar_resultados(resultados)
     await exportar_archivos(resultados, pool=pool)
 
